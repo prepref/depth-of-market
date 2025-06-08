@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/market
+      - SECRET_KEY=your-secret-key-here
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    networks:
+      - market-network
+
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=market
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./storage.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - market-network
+
+volumes:
+  postgres_data:
+
+networks:
+  market-network:
+    driver: bridge 
