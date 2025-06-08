@@ -17,7 +17,7 @@ CREATE TABLE instruments (
 
 -- Балансы пользователей
 CREATE TABLE balances (
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE SET DEFAULT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     ticker VARCHAR(10) NOT NULL REFERENCES instruments(ticker) ON DELETE RESTRICT,
     amount BIGINT NOT NULL CHECK (amount >= 0),
     PRIMARY KEY (user_id, ticker)
