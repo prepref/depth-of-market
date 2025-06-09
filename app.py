@@ -13,18 +13,24 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
+import logging
+from sqlalchemy.orm import Session
 
 from models import Base
 from routers import instruments
 
-# Load environment variables
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Загрузка переменных окружения
 load_dotenv()
 
 # Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/market")
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/market")
 
 # Create SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create FastAPI app
@@ -74,17 +80,31 @@ def create_admin():
         cursor.close()
         conn.close()
 
-# Database connection
 def get_db_connection():
-    conn = psycopg2.connect(
-        dbname="storage_market",
-        user="postgres",
-        password="admin",
-        host="localhost",
-        port="5432",
-        cursor_factory=RealDictCursor
-    )
-    return conn
+    """Создает подключение к базе данных"""
+    try:
+        conn = psycopg2.connect(
+            host="db",  # Используем имя сервиса из docker-compose
+            port=5432,
+            database=os.getenv("POSTGRES_DB", "trading"),
+            user=os.getenv("POSTGRES_USER", "postgres"),
+            password=os.getenv("POSTGRES_PASSWORD", "postgres")
+        )
+        return conn
+    except Exception as e:
+        logger.error(f"Error connecting to database: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database connection error"
+        )
+
+def get_db():
+    """Dependency для получения сессии базы данных"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # Models
 class UserRole(str, Enum):
@@ -741,7 +761,8 @@ def delete_user(user_id: uuid.UUID, user: dict = Depends(get_current_user)):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    """Проверка работоспособности сервиса"""
+    return {"status": "ok"}
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
