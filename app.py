@@ -7,6 +7,44 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Depends, status, Header
 from pydantic import BaseModel, Field, validator
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import os
+from dotenv import load_dotenv
+
+from .models import Base
+from .routers import instruments
+
+# Load environment variables
+load_dotenv()
+
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/market")
+
+# Create SQLAlchemy engine
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create FastAPI app
+app = FastAPI(
+    title="Market Depth API",
+    description="API for market depth and trading operations",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(instruments.router)
 
 def create_admin():
     conn = get_db_connection()
@@ -35,8 +73,6 @@ def create_admin():
     finally:
         cursor.close()
         conn.close()
-
-app = FastAPI()
 
 # Database connection
 def get_db_connection():
@@ -702,6 +738,13 @@ def delete_user(user_id: uuid.UUID, user: dict = Depends(get_current_user)):
     finally:
         cursor.close()
         conn.close()
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 def main():
     create_admin()
