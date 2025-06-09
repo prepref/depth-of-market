@@ -7,11 +7,21 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/market
       - SECRET_KEY=your-secret-key-here
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - .:/app
     networks:
       - market-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: >
+      sh -c "python init_admin.py && uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4"
 
   db:
     image: postgres:15-alpine
@@ -26,6 +36,13 @@ services:
       - ./storage.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - market-network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
