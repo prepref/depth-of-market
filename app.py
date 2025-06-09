@@ -1,7 +1,7 @@
 import time
 from typing import Optional, List, Dict
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -15,9 +15,11 @@ import os
 from dotenv import load_dotenv
 import logging
 from sqlalchemy.orm import Session
+import json
 
 from models import Base
 from routers import instruments
+from database import get_db
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Database configuration
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/market")
+SQLALCHEMY_DATABASE_URL = "postgresql://postgres:postgres@db:5432/market"
 
 # Create SQLAlchemy engine
 engine = create_engine(SQLALCHEMY_DATABASE_URL)

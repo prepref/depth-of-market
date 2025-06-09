@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/market")
+DATABASE_URL = "postgresql://postgres:postgres@db:5432/market"
 
 # Create SQLAlchemy engine
 engine = create_engine(DATABASE_URL)
