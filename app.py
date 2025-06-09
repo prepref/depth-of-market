@@ -14,8 +14,8 @@ from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 
-from .models import Base
-from .routers import instruments
+from models import Base
+from routers import instruments
 
 # Load environment variables
 load_dotenv()

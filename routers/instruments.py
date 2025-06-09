@@ -3,17 +3,17 @@ from sqlalchemy.orm import Session
 from typing import List
 import uuid
 
-from ..database import get_db
-from ..models import Instrument, User
-from ..schemas import InstrumentCreate, InstrumentResponse
-from ..auth import get_current_admin_user
+from database import get_db
+from models import Instrument, User
+from schemas import InstrumentCreate, InstrumentResponse
+from auth import get_current_admin_user
 
 router = APIRouter(
     prefix="/api/v1/admin/instrument",
-    tags=["instruments"]
+    tags=["admin"]
 )
 
-@router.post("/", response_model=InstrumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=InstrumentResponse)
 def create_instrument(
     instrument: InstrumentCreate,
     db: Session = Depends(get_db),
@@ -80,7 +80,7 @@ def update_instrument(
             detail=str(e)
         )
 
-@router.delete("/{ticker}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{ticker}")
 def delete_instrument(
     ticker: str,
     db: Session = Depends(get_db),
@@ -96,6 +96,7 @@ def delete_instrument(
     try:
         db.delete(db_instrument)
         db.commit()
+        return {"success": True}
     except Exception as e:
         db.rollback()
         raise HTTPException(

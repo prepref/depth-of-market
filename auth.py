@@ -1,8 +1,8 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
-from .database import get_db
-from .models import User
+from database import get_db
+from models import User
 
 api_key_header = APIKeyHeader(name="Authorization")
 
