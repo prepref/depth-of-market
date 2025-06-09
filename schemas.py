@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 class InstrumentBase(BaseModel):
-    ticker: constr(regex='^[A-Z]{2,10}$')
+    ticker: str = Field(..., pattern='^[A-Z]{2,10}$')
     name: str = Field(..., min_length=1, max_length=100)
 
 class InstrumentCreate(InstrumentBase):
@@ -16,7 +16,7 @@ class InstrumentResponse(InstrumentBase):
 
 class UserBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    role: str = Field(..., regex='^(USER|ADMIN)$')
+    role: str = Field(..., pattern='^(USER|ADMIN)$')
 
 class UserCreate(UserBase):
     pass
