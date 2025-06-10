@@ -10,21 +10,20 @@ from pydantic import BaseModel, Field, validator
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 import os
 from dotenv import load_dotenv
 import logging
-from sqlalchemy.orm import Session
 import json
 
 from models import Base
 from routers import instruments
 from database import get_db
 from schemas import (
-    NewUser, User as UserSchema, Instrument as InstrumentSchema,
+    NewUser, User as UserSchema, InstrumentResponse,
     L2OrderBook, Level, LimitOrderBody, MarketOrderBody,
     LimitOrder, MarketOrder, CreateOrderResponse, Transaction as TransactionSchema,
-    Ok, Direction, OrderStatus
+    Ok, Direction, OrderStatus, UserRole
 )
 
 # Настройка логирования
@@ -220,7 +219,7 @@ def register(user_data: NewUser, db: Session = Depends(get_db)):
     db.refresh(db_user)
     return db_user
 
-@app.get("/api/v1/public/instrument", response_model=List[InstrumentSchema], tags=["public"])
+@app.get("/api/v1/public/instrument", response_model=List[InstrumentResponse], tags=["public"])
 def list_instruments(db: Session = Depends(get_db)):
     return db.query(Instrument).all()
 
@@ -447,7 +446,7 @@ def cancel_order(order_id: uuid.UUID, user: User = Depends(get_current_user), db
 
 # Admin endpoints
 @app.post("/api/v1/admin/instrument", response_model=Ok, tags=["admin"])
-def add_instrument(instrument: InstrumentSchema, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_instrument(instrument: InstrumentResponse, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role != "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
