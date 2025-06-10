@@ -27,9 +27,13 @@ class User(BaseModel):
     role: UserRole
     api_key: str
 
-class Instrument(BaseModel):
+class InstrumentCreate(BaseModel):
     name: str
     ticker: str = Field(..., pattern="^[A-Z]{2,10}$")
+
+class InstrumentResponse(BaseModel):
+    name: str
+    ticker: str
 
 class Level(BaseModel):
     price: int
