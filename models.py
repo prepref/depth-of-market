@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, UUID, BigInteger, ForeignKey, CheckConstraint, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, DateTime, UUID, BigInteger, ForeignKey, CheckConstraint, Enum as SQLEnum, PrimaryKeyConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -66,6 +66,7 @@ class Balance(Base):
     amount = Column(BigInteger, default=0, nullable=False)
 
     __table_args__ = (
+        PrimaryKeyConstraint('user_id', 'ticker', name='balance_pk'),
         CheckConstraint("amount >= 0", name="check_positive_balance"),
     )
 
