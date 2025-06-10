@@ -1,30 +1,85 @@
-from pydantic import BaseModel, Field, constr
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
+from enum import Enum
 
-class InstrumentBase(BaseModel):
-    ticker: str = Field(..., pattern='^[A-Z]{2,10}$')
-    name: str = Field(..., min_length=1, max_length=100)
+class Direction(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
 
-class InstrumentCreate(InstrumentBase):
-    pass
+class OrderStatus(str, Enum):
+    NEW = "NEW"
+    EXECUTED = "EXECUTED"
+    PARTIALLY_EXECUTED = "PARTIALLY_EXECUTED"
+    CANCELLED = "CANCELLED"
 
-class InstrumentResponse(InstrumentBase):
-    class Config:
-        from_attributes = True
+class UserRole(str, Enum):
+    USER = "USER"
+    ADMIN = "ADMIN"
 
-class UserBase(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    role: str = Field(..., pattern='^(USER|ADMIN)$')
+class NewUser(BaseModel):
+    name: str = Field(..., min_length=3)
 
-class UserCreate(UserBase):
-    pass
-
-class UserResponse(UserBase):
+class User(BaseModel):
     id: UUID
+    name: str
+    role: UserRole
     api_key: str
-    created_at: datetime
 
-    class Config:
-        from_attributes = True 
+class Instrument(BaseModel):
+    name: str
+    ticker: str = Field(..., pattern='^[A-Z]{2,10}$')
+
+class Level(BaseModel):
+    price: int
+    qty: int
+
+class L2OrderBook(BaseModel):
+    bid_levels: List[Level]
+    ask_levels: List[Level]
+
+class LimitOrderBody(BaseModel):
+    direction: Direction
+    ticker: str
+    qty: int = Field(..., minimum=1)
+    price: int = Field(..., exclusiveMinimum=0)
+
+class MarketOrderBody(BaseModel):
+    direction: Direction
+    ticker: str
+    qty: int = Field(..., minimum=1)
+
+class LimitOrder(BaseModel):
+    id: UUID
+    status: OrderStatus
+    user_id: UUID
+    body: LimitOrderBody
+    filled: int = 0
+
+class MarketOrder(BaseModel):
+    id: UUID
+    status: OrderStatus
+    user_id: UUID
+    body: MarketOrderBody
+
+class CreateOrderResponse(BaseModel):
+    success: bool = True
+    order_id: UUID
+
+class Transaction(BaseModel):
+    ticker: str
+    amount: int
+    price: int
+    timestamp: datetime
+
+class Ok(BaseModel):
+    success: bool = True
+
+class ValidationError(BaseModel):
+    loc: List[str | int]
+    msg: str
+    type: str
+
+class HTTPValidationError(BaseModel):
+    detail: List[ValidationError] 

@@ -20,6 +20,12 @@ import json
 from models import Base
 from routers import instruments
 from database import get_db
+from schemas import (
+    NewUser, User as UserSchema, Instrument as InstrumentSchema,
+    L2OrderBook, Level, LimitOrderBody, MarketOrderBody,
+    LimitOrder, MarketOrder, CreateOrderResponse, Transaction as TransactionSchema,
+    Ok, Direction, OrderStatus
+)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +43,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create FastAPI app
 app = FastAPI(
-    title="Market Depth API",
-    description="API for market depth and trading operations",
-    version="1.0.0"
+    title="Toy exchange",
+    version="0.1.0"
 )
 
 # Add CORS middleware
@@ -184,7 +189,7 @@ class L2OrderBook(BaseModel):
     ask_levels: List[Level]
 
 # Helpers
-def get_current_user(Authorization: str = Header(...)):
+def get_current_user(Authorization: str = Header(...), db: Session = Depends(get_db)):
     if not Authorization.startswith("TOKEN "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -192,578 +197,296 @@ def get_current_user(Authorization: str = Header(...)):
         )
     
     api_key = Authorization.removeprefix("TOKEN ")
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    user = db.query(User).filter(User.api_key == api_key).first()
     
-    try:
-        cursor.execute(
-            "SELECT * FROM users WHERE api_key = %s",
-            (api_key,)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
         )
-        user = cursor.fetchone()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key"
-            )
-        return user
-    finally:
-        cursor.close()
-        conn.close()
+    return user
 
 # Endpoints
-@app.post("/api/v1/public/register", response_model=User, tags=["public"])
-def register(user_data: NewUser):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        api_key = f"{uuid.uuid4()}"
-        cursor.execute(
-            """
-            INSERT INTO users (name, api_key, role)
-            VALUES (%s, %s, %s)
-            RETURNING id, name, role, api_key
-            """,
-            (user_data.name, api_key, UserRole.USER.value)
-        )
-        user = cursor.fetchone()
-        conn.commit()
-        
-        return {
-            "id": str(user["id"]),
-            "name": user["name"],
-            "role": user["role"],
-            "api_key": user["api_key"]
-        }
-    
-    except psycopg2.IntegrityError as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists"
-        )
-    finally:
-        cursor.close()
-        conn.close()
+@app.post("/api/v1/public/register", response_model=UserSchema, tags=["public"])
+def register(user_data: NewUser, db: Session = Depends(get_db)):
+    api_key = str(uuid.uuid4())
+    db_user = User(
+        name=user_data.name,
+        api_key=api_key,
+        role="USER"
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
 
-@app.get("/api/v1/public/instrument", response_model=List[Instrument], tags=["public"])
-def list_instruments(is_active: bool = True):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "SELECT name, ticker FROM instruments WHERE is_active = %s",
-            (is_active,)
-        )
-        instruments = cursor.fetchall()
-        return [{"name": item["name"], "ticker": item["ticker"]} for item in instruments]
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/api/v1/balance", response_model=Dict[str, int], tags=["balance"])
-def get_balances(user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "SELECT ticker, amount FROM balances WHERE user_id = %s",
-            (user['id'],)
-        )
-        return {row['ticker']: row['amount'] for row in cursor.fetchall()}
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.post("/api/v1/order", tags=["order"])
-def create_order(order: OrderCreate, user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "SELECT 1 FROM instruments WHERE ticker = %s LIMIT 1",
-            (order.ticker,)
-        )
-        if not cursor.fetchone():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ticker {order.ticker} not found"
-            )
-
-        if order.direction == Direction.SELL:
-            cursor.execute(
-                "SELECT amount FROM balances WHERE user_id = %s AND ticker = %s FOR UPDATE",
-                (user["id"], order.ticker)
-            )
-            balance = cursor.fetchone()
-            
-            if not balance or balance["amount"] < order.qty:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Not enough balance to place sell order"
-                )
-
-        cursor.execute(
-            """
-            INSERT INTO orders 
-            (user_id, ticker, direction, order_type, price, qty, status, currency)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (user["id"], order.ticker, order.direction.value, 
-            OrderType.LIMIT.value if order.price else OrderType.MARKET.value, 
-            order.price, order.qty, OrderStatus.NEW.value, order.currency)
-        )
-        new_order = cursor.fetchone()
-        conn.commit()
-        return {"success": True, "order_id": new_order["id"]}
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/api/v1/order", response_model=List[OrderResponse], tags=["order"])
-def get_orders(user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            """
-            SELECT * FROM orders WHERE user_id = %s
-            """,
-            (user["id"],)
-        )
-        users_orders = [
-            {
-                "id": order["id"],
-                "status": order["status"],
-                "user_id": order["user_id"],
-                "body": {
-                    "direction": order["direction"],
-                    "ticker": order["ticker"],
-                    "qty": order["qty"],
-                    "price": order["price"],
-                    "currency": order["currency"]
-                },
-                "filled": order["filled_qty"]
-            }
-            for order in cursor.fetchall()
-            ]     
-        return users_orders
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.get("/api/v1/order/{order_id}", response_model=OrderResponse, tags=["order"])
-def get_order(order_id: uuid.UUID, user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            """
-            SELECT * FROM orders WHERE user_id = %s AND id = %s
-            """,
-            (user["id"], order_id)
-        )
-        order_data = cursor.fetchone()
-        if not order_data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Order {order_id} not found"
-            )
-            
-        return {
-            "id": order_data["id"],
-            "status": order_data["status"],
-            "user_id": order_data["user_id"],
-            "body": {
-                "direction": order_data["direction"],
-                "ticker": order_data["ticker"],
-                "qty": order_data["qty"],
-                "price": order_data["price"],
-                "currency": order_data["currency"]
-            },
-            "filled": order_data["filled_qty"]
-        }
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    finally:
-        cursor.close()
-        conn.close()
+@app.get("/api/v1/public/instrument", response_model=List[InstrumentSchema], tags=["public"])
+def list_instruments(db: Session = Depends(get_db)):
+    return db.query(Instrument).all()
 
 @app.get("/api/v1/public/orderbook/{ticker}", response_model=L2OrderBook, tags=["public"])
-def get_orderbook(ticker: str, limit: int = 10):
+def get_orderbook(ticker: str, limit: int = 10, db: Session = Depends(get_db)):
     if limit > 25:
         limit = 25
-        
-    conn = get_db_connection()
-    cursor = conn.cursor()
     
-    try:
-        cursor.execute(
-            """
-            SELECT price, qty, side
-            FROM orderbook
-            WHERE ticker = %s
-            ORDER BY 
-                CASE WHEN side = 'BUY' THEN price END DESC,
-                CASE WHEN side = 'SELL' THEN price END ASC
-            LIMIT %s
-            """,
-            (ticker, limit * 2)
-        )
-        
-        levels = cursor.fetchall()
-        bid_levels = []
-        ask_levels = []
-        
-        for level in levels:
-            if level['side'] == 'BUY':
-                bid_levels.append(Level(price=level['price'], qty=level['qty']))
-            else:
-                ask_levels.append(Level(price=level['price'], qty=level['qty']))
-        
-        return L2OrderBook(bid_levels=bid_levels, ask_levels=ask_levels)
-    finally:
-        cursor.close()
-        conn.close()
+    orders = db.query(Order).filter(
+        Order.ticker == ticker,
+        Order.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED])
+    ).order_by(
+        Order.price.desc() if Order.direction == Direction.BUY else Order.price.asc()
+    ).limit(limit * 2).all()
+    
+    bid_levels = []
+    ask_levels = []
+    
+    for order in orders:
+        level = Level(price=order.price, qty=order.qty - order.filled_qty)
+        if order.direction == Direction.BUY:
+            bid_levels.append(level)
+        else:
+            ask_levels.append(level)
+    
+    return L2OrderBook(bid_levels=bid_levels, ask_levels=ask_levels)
 
-@app.get("/api/v1/public/transactions/{ticker}", response_model=List[Transaction], tags=["public"])
-def get_transaction_history(ticker: str, limit: int = 10):
+@app.get("/api/v1/public/transactions/{ticker}", response_model=List[TransactionSchema], tags=["public"])
+def get_transaction_history(ticker: str, limit: int = 10, db: Session = Depends(get_db)):
     if limit > 100:
         limit = 100
-        
-    conn = get_db_connection()
-    cursor = conn.cursor()
     
-    try:
-        cursor.execute(
-            """
-            SELECT id, ticker, price, qty, currency, created_at
-            FROM transactions
-            WHERE ticker = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            (ticker, limit)
-        )
-        
-        transactions = cursor.fetchall()
-        return [
-            Transaction(
-                id=row['id'],
-                ticker=row['ticker'],
-                price=row['price'],
-                qty=row['qty'],
-                currency=row['currency'],
-                created_at=row['created_at']
-            )
-            for row in transactions
-        ]
-    finally:
-        cursor.close()
-        conn.close()
-
-class DepositRequest(BaseModel):
-    ticker: str = Field(..., pattern=r'^[A-Z]{2,10}$')
-    amount: int = Field(..., gt=0)
-
-@app.post("/api/v1/balance/deposit", tags=["balance"])
-def deposit(deposit_data: DepositRequest, user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    transactions = db.query(Transaction).filter(
+        Transaction.ticker == ticker
+    ).order_by(
+        Transaction.created_at.desc()
+    ).limit(limit).all()
     
-    try:
-        cursor.execute("SELECT 1 FROM instruments WHERE ticker = %s LIMIT 1", (deposit_data.ticker,))
-        if not cursor.fetchone():
-            raise HTTPException(
-                status_code=status.HTTP_400_NOT_FOUND,
-                detail=f"Ticker {deposit_data.ticker} not found"
-            )
-        
-        cursor.execute(
-            """
-            INSERT INTO balances (user_id, ticker, amount)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, ticker) 
-            DO UPDATE SET amount = balances.amount + EXCLUDED.amount;
-            """,
-            (user["id"], deposit_data.ticker, deposit_data.amount)
-        )
+    return [
+        TransactionSchema(
+            ticker=t.ticker,
+            amount=t.qty,
+            price=t.price,
+            timestamp=t.created_at
+        ) for t in transactions
+    ]
 
-        conn.commit()
+@app.get("/api/v1/balance", response_model=Dict[str, int], tags=["balance"])
+def get_balances(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    balances = db.query(Balance).filter(Balance.user_id == user.id).all()
+    return {b.ticker: b.amount for b in balances}
 
-        return {
-            "status": "success"
-        }
-    except psycopg2.Error as e:
-        conn.rollback()
+@app.post("/api/v1/balance/deposit", response_model=Ok, tags=["balance"])
+def deposit(ticker: str, amount: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if amount <= 0:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Amount must be positive"
         )
-    finally:
-        cursor.close()
-        conn.close()
-
-class WithdrawRequest(BaseModel):
-    ticker: str = Field(..., pattern=r'^[A-Z]{2,10}$')
-    amount: int = Field(..., gt=0)
-
-@app.post("/api/v1/balance/withdraw", tags=["balance"])
-def withdraw(withdraw_data: WithdrawRequest,user: dict = Depends(get_current_user)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
     
-    try:
-        cursor.execute(
-            "SELECT 1 FROM instruments WHERE ticker = %s",
-            (withdraw_data.ticker,)
-        )
-        if not cursor.fetchone():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ticker {withdraw_data.ticker} not found"
-            )
+    balance = db.query(Balance).filter(
+        Balance.user_id == user.id,
+        Balance.ticker == ticker
+    ).first()
+    
+    if balance:
+        balance.amount += amount
+    else:
+        balance = Balance(user_id=user.id, ticker=ticker, amount=amount)
+        db.add(balance)
+    
+    db.commit()
+    return Ok()
 
-        cursor.execute(
-            "SELECT amount FROM balances WHERE user_id = %s AND ticker = %s FOR UPDATE",
-            (user["id"], withdraw_data.ticker)
-        )
-        balance = cursor.fetchone()
-        
-        if not balance:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No balance found for ticker {withdraw_data.ticker}"
-            )
-            
-        if balance["amount"] < withdraw_data.amount:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Insufficient funds"
-            )
-
-        cursor.execute(
-            """
-            UPDATE balances 
-            SET amount = amount - %s
-            WHERE user_id = %s AND ticker = %s;
-            """,
-            (withdraw_data.amount, user["id"], withdraw_data.ticker)
-        )
-        
-        conn.commit()
-        
-        return {
-            "status": "success",
-        }
-    except psycopg2.Error as e:
-        conn.rollback()
+@app.post("/api/v1/balance/withdraw", response_model=Ok, tags=["balance"])
+def withdraw(ticker: str, amount: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if amount <= 0:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Amount must be positive"
         )
-    finally:
-        cursor.close()
-        conn.close()
+    
+    balance = db.query(Balance).filter(
+        Balance.user_id == user.id,
+        Balance.ticker == ticker
+    ).first()
+    
+    if not balance or balance.amount < amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Insufficient balance"
+        )
+    
+    balance.amount -= amount
+    db.commit()
+    return Ok()
 
+@app.post("/api/v1/order", response_model=CreateOrderResponse, tags=["order"])
+def create_order(
+    order: LimitOrderBody | MarketOrderBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if instrument exists
+    instrument = db.query(Instrument).filter(Instrument.ticker == order.ticker).first()
+    if not instrument:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ticker {order.ticker} not found"
+        )
+    
+    # Check balance for sell orders
+    if order.direction == Direction.SELL:
+        balance = db.query(Balance).filter(
+            Balance.user_id == user.id,
+            Balance.ticker == order.ticker
+        ).first()
+        
+        if not balance or balance.amount < order.qty:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not enough balance to place sell order"
+            )
+    
+    # Create order
+    db_order = Order(
+        user_id=user.id,
+        ticker=order.ticker,
+        direction=order.direction,
+        order_type="LIMIT" if isinstance(order, LimitOrderBody) else "MARKET",
+        price=order.price if isinstance(order, LimitOrderBody) else None,
+        qty=order.qty,
+        status=OrderStatus.NEW
+    )
+    
+    db.add(db_order)
+    db.commit()
+    db.refresh(db_order)
+    
+    return CreateOrderResponse(order_id=db_order.id)
+
+@app.get("/api/v1/order", response_model=List[LimitOrder | MarketOrder], tags=["order"])
+def get_orders(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    orders = db.query(Order).filter(Order.user_id == user.id).all()
+    return [
+        LimitOrder(
+            id=o.id,
+            status=o.status,
+            user_id=o.user_id,
+            body=LimitOrderBody(
+                direction=o.direction,
+                ticker=o.ticker,
+                qty=o.qty,
+                price=o.price
+            ),
+            filled=o.filled_qty
+        ) if o.order_type == "LIMIT" else MarketOrder(
+            id=o.id,
+            status=o.status,
+            user_id=o.user_id,
+            body=MarketOrderBody(
+                direction=o.direction,
+                ticker=o.ticker,
+                qty=o.qty
+            )
+        ) for o in orders
+    ]
+
+@app.get("/api/v1/order/{order_id}", response_model=LimitOrder | MarketOrder, tags=["order"])
+def get_order(order_id: uuid.UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.user_id == user.id
+    ).first()
+    
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order {order_id} not found"
+        )
+    
+    if order.order_type == "LIMIT":
+        return LimitOrder(
+            id=order.id,
+            status=order.status,
+            user_id=order.user_id,
+            body=LimitOrderBody(
+                direction=order.direction,
+                ticker=order.ticker,
+                qty=order.qty,
+                price=order.price
+            ),
+            filled=order.filled_qty
+        )
+    else:
+        return MarketOrder(
+            id=order.id,
+            status=order.status,
+            user_id=order.user_id,
+            body=MarketOrderBody(
+                direction=order.direction,
+                ticker=order.ticker,
+                qty=order.qty
+            )
+        )
+
+@app.delete("/api/v1/order/{order_id}", response_model=Ok, tags=["order"])
+def cancel_order(order_id: uuid.UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.user_id == user.id,
+        Order.status.in_([OrderStatus.NEW, OrderStatus.PARTIALLY_EXECUTED])
+    ).first()
+    
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order {order_id} not found or cannot be cancelled"
+        )
+    
+    order.status = OrderStatus.CANCELLED
+    db.commit()
+    return Ok()
 
 # Admin endpoints
-@app.post("/api/v1/admin/instrument", tags=["admin"])
-def add_instrument(instrument: Instrument, user: dict = Depends(get_current_user)):
-    if user['role'] != UserRole.ADMIN.value:
+@app.post("/api/v1/admin/instrument", response_model=Ok, tags=["admin"])
+def add_instrument(instrument: InstrumentSchema, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
+    db_instrument = Instrument(**instrument.model_dump())
+    db.add(db_instrument)
     try:
-        cursor.execute(
-            """
-            INSERT INTO instruments (ticker, name)
-            VALUES (%s, %s)
-            RETURNING *
-            """,
-            (instrument.ticker, instrument.name)
-        )
-        new_instrument = cursor.fetchone()
-        conn.commit()
-        return new_instrument
-    except psycopg2.IntegrityError:
-        conn.rollback()
+        db.commit()
+        return Ok()
+    except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Instrument already exists"
         )
-    finally:
-        cursor.close()
-        conn.close()
-
-class AdminDepositRequest(BaseModel):
-    user_id: uuid.UUID
-    ticker: str = Field(..., pattern=r'^[A-Z]{2,10}$')
-    amount: int = Field(..., gt=0)
-
-class AdminWithdrawRequest(BaseModel):
-    user_id: uuid.UUID
-    ticker: str = Field(..., pattern=r'^[A-Z]{2,10}$')
-    amount: int = Field(..., gt=0)
-
-class Ok(BaseModel):
-    success: bool = True
-
-@app.post("/api/v1/admin/balance/deposit", response_model=Ok, tags=["admin", "balance"])
-def admin_deposit(request: AdminDepositRequest, user: dict = Depends(get_current_user)):
-    if user["role"] != UserRole.ADMIN.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can deposit funds"
-        )
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            """
-            INSERT INTO balances (user_id, ticker, amount)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, ticker)
-            DO UPDATE SET amount = balances.amount + EXCLUDED.amount
-            """,
-            (request.user_id, request.ticker, request.amount)
-        )
-        conn.commit()
-        return Ok()
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.post("/api/v1/admin/balance/withdraw", response_model=Ok, tags=["admin", "balance"])
-def admin_withdraw(request: AdminWithdrawRequest, user: dict = Depends(get_current_user)):
-    if user["role"] != UserRole.ADMIN.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can withdraw funds"
-        )
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            """
-            UPDATE balances
-            SET amount = amount - %s
-            WHERE user_id = %s AND ticker = %s AND amount >= %s
-            """,
-            (request.amount, request.user_id, request.ticker, request.amount)
-        )
-        
-        if cursor.rowcount == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Insufficient balance or user not found"
-            )
-            
-        conn.commit()
-        return Ok()
-    finally:
-        cursor.close()
-        conn.close()
 
 @app.delete("/api/v1/admin/instrument/{ticker}", response_model=Ok, tags=["admin"])
-def delete_instrument(ticker: str, user: dict = Depends(get_current_user)):
-    if user["role"] != UserRole.ADMIN.value:
+def delete_instrument(ticker: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can delete instruments"
+            detail="Admin access required"
         )
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "DELETE FROM instruments WHERE ticker = %s",
-            (ticker,)
-        )
-        
-        if cursor.rowcount == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Instrument {ticker} not found"
-            )
-            
-        conn.commit()
-        return Ok()
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.delete("/api/v1/admin/user/{user_id}", response_model=User, tags=["admin", "user"])
-def delete_user(user_id: uuid.UUID, user: dict = Depends(get_current_user)):
-    if user["role"] != UserRole.ADMIN.value:
+    instrument = db.query(Instrument).filter(Instrument.ticker == ticker).first()
+    if not instrument:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can delete users"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instrument {ticker} not found"
         )
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute(
-            "DELETE FROM users WHERE id = %s RETURNING id, name, role, api_key",
-            (user_id,)
-        )
-        
-        deleted_user = cursor.fetchone()
-        if not deleted_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User {user_id} not found"
-            )
-            
-        conn.commit()
-        return {
-            "id": str(deleted_user["id"]),
-            "name": deleted_user["name"],
-            "role": deleted_user["role"],
-            "api_key": deleted_user["api_key"]
-        }
-    finally:
-        cursor.close()
-        conn.close()
+    db.delete(instrument)
+    db.commit()
+    return Ok()
 
 @app.get("/health")
 async def health_check():
-    """Проверка работоспособности сервиса"""
     return {"status": "ok"}
 
 # Create database tables
