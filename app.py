@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 import logging
 import json
 
-from models import Base
+from models import Base, User
 from routers import instruments
-from database import get_db
+from database import get_db, engine, SessionLocal
 from schemas import (
     NewUser, User as UserSchema, InstrumentResponse,
     L2OrderBook, Level, LimitOrderBody, MarketOrderBody,
@@ -32,9 +32,6 @@ logger = logging.getLogger(__name__)
 
 # Загрузка переменных окружения
 load_dotenv()
-
-# Database configuration
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:postgres@db:5432/market"
 
 # Create SQLAlchemy engine
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
@@ -188,7 +185,7 @@ class L2OrderBook(BaseModel):
     ask_levels: List[Level]
 
 # Helpers
-def get_current_user(Authorization: str = Header(...), db: Session = Depends(get_db)):
+def get_current_user(Authorization: str = Header(...), db: Session = Depends(get_db)) -> UserSchema:
     if not Authorization.startswith("TOKEN "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -201,8 +198,9 @@ def get_current_user(Authorization: str = Header(...), db: Session = Depends(get
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
+            detail="Invalid authentication credentials"
         )
+    
     return user
 
 # Endpoints

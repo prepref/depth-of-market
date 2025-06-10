@@ -15,7 +15,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        CheckConstraint("role IN ('USER', 'ADMIN')", name="check_role_values"),
+        CheckConstraint("role IN ('user', 'admin')", name="check_role_values"),
     )
 
 class Instrument(Base):
