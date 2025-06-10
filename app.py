@@ -447,23 +447,24 @@ def cancel_order(order_id: uuid.UUID, user: User = Depends(get_current_user), db
 
 # Admin endpoints
 @app.post("/api/v1/admin/instrument", response_model=Ok, tags=["admin"])
-def add_instrument(instrument: InstrumentResponse, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if user.role != "ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    
-    db_instrument = Instrument(**instrument.model_dump())
-    db.add(db_instrument)
+def add_instrument(
+    instrument: InstrumentCreate,
+    db: Session = Depends(get_db),
+    current_user: UserSchema = Depends(get_current_admin_user)
+):
     try:
+        db_instrument = InstrumentModel(
+            name=instrument.name,
+            ticker=instrument.ticker
+        )
+        db.add(db_instrument)
         db.commit()
         return Ok()
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Instrument already exists"
+            detail=str(e)
         )
 
 @app.delete("/api/v1/admin/instrument/{ticker}", response_model=Ok, tags=["admin"])
