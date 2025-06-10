@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 import logging
 import json
 
-from models import Base, User, Instrument, Order, Transaction, Balance
+from models import Base, User as UserModel, Instrument, Order, Transaction, Balance
 from routers import instruments
 from database import get_db, engine, SessionLocal
 from schemas import (
@@ -191,15 +191,20 @@ def get_current_user(Authorization: str = Header(...), db: Session = Depends(get
         )
     
     api_key = Authorization.removeprefix("TOKEN ")
-    user = db.query(User).filter(User.api_key == api_key).first()
+    user = db.query(UserModel).filter(UserModel.api_key == api_key).first()
     
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials"
+            detail="Invalid API key"
         )
     
-    return user
+    return UserSchema(
+        id=user.id,
+        name=user.name,
+        role=user.role,
+        api_key=user.api_key
+    )
 
 # Endpoints
 @app.post("/api/v1/public/register", response_model=UserSchema, tags=["public"])
