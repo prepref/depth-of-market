@@ -5,79 +5,110 @@ from uuid import UUID
 from enum import Enum
 
 class Direction(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
+    BUY = "buy"
+    SELL = "sell"
 
 class OrderStatus(str, Enum):
-    NEW = "NEW"
-    EXECUTED = "EXECUTED"
-    PARTIALLY_EXECUTED = "PARTIALLY_EXECUTED"
-    CANCELLED = "CANCELLED"
+    ACTIVE = "active"
+    FILLED = "filled"
+    CANCELLED = "cancelled"
 
 class UserRole(str, Enum):
-    USER = "USER"
-    ADMIN = "ADMIN"
+    USER = "user"
+    ADMIN = "admin"
 
 class NewUser(BaseModel):
-    name: str = Field(..., min_length=3)
+    name: str = Field(..., min_length=1, max_length=100)
 
 class User(BaseModel):
     id: UUID
     name: str
     role: UserRole
-    api_key: str
+    created_at: datetime
 
-class Instrument(BaseModel):
+    class Config:
+        from_attributes = True
+
+class InstrumentCreate(BaseModel):
+    ticker: str = Field(..., min_length=2, max_length=10, pattern="^[A-Z]{2,10}$")
+    name: str = Field(..., min_length=1, max_length=100)
+
+class InstrumentResponse(BaseModel):
+    ticker: str
     name: str
-    ticker: str = Field(..., pattern='^[A-Z]{2,10}$')
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 class Level(BaseModel):
     price: int
     qty: int
 
 class L2OrderBook(BaseModel):
-    bid_levels: List[Level]
-    ask_levels: List[Level]
+    ticker: str
+    bids: List[Level]
+    asks: List[Level]
 
 class LimitOrderBody(BaseModel):
-    direction: Direction
     ticker: str
-    qty: int = Field(..., minimum=1)
-    price: int = Field(..., exclusiveMinimum=0)
+    direction: Direction
+    price: int = Field(..., gt=0)
+    qty: int = Field(..., gt=0)
 
 class MarketOrderBody(BaseModel):
-    direction: Direction
     ticker: str
-    qty: int = Field(..., minimum=1)
+    direction: Direction
+    qty: int = Field(..., gt=0)
 
 class LimitOrder(BaseModel):
     id: UUID
-    status: OrderStatus
     user_id: UUID
-    body: LimitOrderBody
-    filled: int = 0
+    ticker: str
+    direction: Direction
+    price: int
+    qty: int
+    filled_qty: int
+    status: OrderStatus
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 class MarketOrder(BaseModel):
     id: UUID
-    status: OrderStatus
     user_id: UUID
-    body: MarketOrderBody
+    ticker: str
+    direction: Direction
+    qty: int
+    filled_qty: int
+    status: OrderStatus
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 class CreateOrderResponse(BaseModel):
-    success: bool = True
-    order_id: UUID
+    order: LimitOrder | MarketOrder
+    transactions: List[dict]
 
 class Transaction(BaseModel):
+    id: UUID
     ticker: str
-    amount: int
     price: int
-    timestamp: datetime
+    qty: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 class Ok(BaseModel):
     success: bool = True
 
 class ValidationError(BaseModel):
-    loc: List[str | int]
+    loc: List[str]
     msg: str
     type: str
 
