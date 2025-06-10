@@ -8,15 +8,13 @@ from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Depends, status, Header
 from pydantic import BaseModel, Field, validator
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 import os
 from dotenv import load_dotenv
 import logging
 import json
 
-from models import Base, User
+from models import Base, User, Instrument, Order, Transaction, Balance
 from routers import instruments
 from database import get_db, engine, SessionLocal
 from schemas import (
@@ -25,6 +23,7 @@ from schemas import (
     LimitOrder, MarketOrder, CreateOrderResponse, Transaction as TransactionSchema,
     Ok, Direction, OrderStatus, UserRole
 )
+from auth import get_current_user, get_current_admin_user
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +32,8 @@ logger = logging.getLogger(__name__)
 # Загрузка переменных окружения
 load_dotenv()
 
-# Create SQLAlchemy engine
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 # Create FastAPI app
 app = FastAPI(
@@ -485,9 +483,6 @@ def delete_instrument(ticker: str, user: User = Depends(get_current_user), db: S
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
-
-# Create database tables
-Base.metadata.create_all(bind=engine)
 
 def main():
     create_admin()
